@@ -25,20 +25,35 @@ jobs:
           python -m pip install --upgrade pip build
           sudo apt update
           sudo apt-get install flex bison ccache
-      - name: Set up caching
-        uses: actions/cache@v4
+      - name: Add swap (the ARM backend runs the runner out of memory)
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h; df -h / /mnt
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
-          key: llvm-${{ hashFiles('llvm-src', 'build.sh') }}
+          key: llvm-${{ hashFiles('llvm-src', 'build.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            llvm-${{ hashFiles('llvm-src', 'build.sh') }}
+            llvm-${{ hashFiles('llvm-src', 'build.sh') }}-
             llvm-
       - name: Set up ccache
         run: |
           ccache --max-size=10G -z
       - name: Build WASM binaries
+        timeout-minutes: 320
         run: |
           MAKEFLAGS=-j$(nproc) ./build.sh
+      - name: Save ccache (also after a failure / timeout, so a rerun resumes)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: llvm-${{ hashFiles('llvm-src', 'build.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Build WASM artifact
         run: |
           tar cvf wasi-prefix.tar wasi-prefix
